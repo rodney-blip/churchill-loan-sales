@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legacy Lending — Loan Tape Converter</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<style>
+:root {
+  --bg: #f0f2f5;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  --text: #1a1a2e;
+  --text-muted: #6b7280;
+  --border: #e2e8f0;
+  --primary: #1B3A5C;
+  --primary-light: #2a5a8c;
+  --accent: #2E7D32;
+  --accent-light: #4CAF50;
+  --manual-bg: #FFFDE7;
+  --manual-border: #FBC02D;
+  --manual-input: #FFFFF0;
+  --danger: #d32f2f;
+  --warning: #f57c00;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+  --radius: 8px;
+}
+body.dark {
+  --bg: #0f172a;
+  --bg-card: #1e293b;
+  --bg-input: #334155;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.4);
+  --manual-bg: #3d3500;
+  --manual-border: #FBC02D;
+  --manual-input: #4a4000;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+.container { max-width: 1800px; margin: 0 auto; padding: 0 20px 40px; }
+
+/* Header */
+.app-header {
+  background: var(--primary);
+  color: #fff;
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.app-header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+.app-header p { font-size: 13px; opacity: 0.8; margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.dark-toggle {
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+.dark-toggle:hover { background: rgba(255,255,255,0.25); }
+
+/* Settings Panel */
+.settings-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow);
+}
+.setting { display: flex; align-items: center; gap: 8px; }
+.setting label { font-size: 13px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.setting input[type="date"],
+.setting input[type="text"] {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg-input);
+  color: var(--text);
+}
+.setting input[type="checkbox"] { accent-color: var(--primary); }
+.setting-check-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: var(--text-muted); }
+
+/* Upload Zone */
+.upload-zone {
+  background: var(--bg-card);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 5%, var(--bg-card));
+}
+.upload-zone.drag-over { border-style: solid; }
+.upload-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.6; }
+.upload-text { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+.upload-subtext { font-size: 13px; color: var(--text-muted); }
+
+/* Status Bar */
+.status-bar {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  display: none;
+  box-shadow: var(--shadow);
+}
+.progress-track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.3s;
+}
+.status-text { font-size: 13px; color: var(--text-muted); }
+
+/* Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+  display: none;
+}
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-card .value { font-size: 28px; font-weight: 700; color: var(--primary); margin-top: 2px; }
+body.dark .stat-card .value { color: #7dd3fc; }
+
+/* Table Section */
+.table-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+  display: none;
+}
+.table-toolbar {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-light); }
+.btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--border); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { opacity: 0.9; }
+.toolbar-spacer { flex: 1; }
+.loan-count { font-size: 13px; color: var(--text-muted); }
+.manual-count { font-size: 13px; color: var(--warning); font-weight: 500; }
+
+.table-container {
+  overflow-x: auto;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.loan-table {
+  width: max-content;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.loan-table thead { position: sticky; top: 0; z-index: 10; }
+.loan-table th {
+  background: var(--primary);
+  color: #fff;
+  padding: 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  border: 1px solid #15304d;
+  position: sticky;
+  top: 0;
+}
+.loan-table td {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.loan-table tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 50%, var(--bg-card)); }
+.loan-table tr:hover td { background: color-mix(in srgb, var(--primary) 8%, var(--bg-card)); }
+td.manual-cell {
+  background: var(--manual-bg) !important;
+  border-color: var(--manual-border);
+}
+td.manual-cell input {
+  background: var(--manual-input);
+  border: 1px solid var(--manual-border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--text);
+  width: 100%;
+  min-width: 60px;
+}
+td.manual-cell input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+td.formula-cell { color: var(--primary); font-weight: 600; }
+body.dark td.formula-cell { color: #7dd3fc; }
+td.date-cell { font-variant-numeric: tabular-nums; }
+td.money-cell { text-align: right; font-variant-numeric: tabular-nums; }
+td.pct-cell { text-align: right; font-variant-numeric: tabular-nums; }
+td.desc-cell { max-width: 300px; white-space: pre-wrap; font-size: 11px; line-height: 1.3; }
+.row-status {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.row-status.complete { background: var(--accent); }
+.row-status.incomplete { background: var(--warning); }
+
+/* History Section */
+.history-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow);
+}
+.history-section h3 { font-size: 14px; margin-bottom: 10px; }
+.history-list { font-size: 13px; color: var(--text-muted); }
+.history-item { padding: 4px 0; display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.history-item:last-child { border-bottom: none; }
+.history-empty { font-style: italic; }
+.clear-history { font-size: 12px; color: var(--danger); cursor: pointer; background: none; border: none; margin-top: 8px; }
+.clear-history:hover { text-decoration: underline; }
+
+/* Report Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  max-width: 700px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: var(--shadow-lg);
+}
+.modal h2 { font-size: 18px; margin-bottom: 16px; }
+.modal pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.modal-close {
+  margin-top: 16px;
+  float: right;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .settings-panel { flex-direction: column; align-items: flex-start; }
+  .table-container { max-height: 50vh; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div>
+    <h1>Legacy Lending &mdash; Loan Tape Converter</h1>
+    <p>Mortgage Automator Batch Export &rarr; Churchill RTL Tape v5</p>
+  </div>
+  <div class="header-right">
+    <button class="dark-toggle" onclick="toggleDarkMode()" id="darkBtn">Dark Mode</button>
+  </div>
+</header>
+
+<div class="container">
+  <section class="settings-panel">
+    <div class="setting">
+      <label for="cutoffDate">Cutoff Date</label>
+      <input type="date" id="cutoffDate" value="2025-11-01">
+    </div>
+    <div class="setting">
+      <label for="originatorName">Originator</label>
+      <input type="text" id="originatorName" value="Legacy Lending LLC" style="width:200px">
+    </div>
+    <div class="setting">
+      <label class="setting-check-label">
+        <input type="checkbox" id="forceReprocess">
+        Force reprocess (bypass manifest)
+      </label>
+    </div>
+  </section>
+
+  <section class="upload-zone" id="uploadZone">
+    <div class="upload-icon">&#128196;</div>
+    <p class="upload-text">Drag &amp; drop MA batch export (.xlsx)</p>
+    <p class="upload-subtext">or click to browse</p>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+  </section>
+
+  <div class="status-bar" id="statusBar">
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <span class="status-text" id="statusText"></span>
+  </div>
+
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="label">Loans Processed</div><div class="value" id="statLoans">0</div></div>
+    <div class="stat-card"><div class="label">Manual Fields Left</div><div class="value" id="statManual">0</div></div>
+    <div class="stat-card"><div class="label">Skipped (Dedup)</div><div class="value" id="statSkipped">0</div></div>
+    <div class="stat-card"><div class="label">Total Loan Volume</div><div class="value" id="statVolume">$0</div></div>
+  </div>
+
+  <section class="table-section" id="tableSection">
+    <div class="table-toolbar">
+      <button class="btn btn-primary" id="downloadBtn" onclick="handleDownload()">Download RTL Tape (.xlsx)</button>
+      <button class="btn btn-secondary" onclick="showReport()">Summary Report</button>
+      <div class="toolbar-spacer"></div>
+      <span class="manual-count" id="manualCount"></span>
+      <span class="loan-count" id="loanCount"></span>
+    </div>
+    <div class="table-container">
+      <table class="loan-table" id="loanTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="history-section" id="historySection">
+    <h3>Processing History</h3>
+    <div class="history-list" id="historyList"></div>
+  </section>
+</div>
+
+<div class="modal-overlay" id="reportModal">
+  <div class="modal">
+    <h2>Conversion Report</h2>
+    <pre id="reportContent"></pre>
+    <button class="btn btn-secondary modal-close" onclick="closeReport()">Close</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SECTION 1: CONSTANTS & CONFIGURATION
+// ═══════════════════════════════════════════════════════════════
+
+const ORIGINATOR_DEFAULT = 'Legacy Lending LLC';
+
+// MA Batch Export column indices (0-based, from "Funded Loans" tab)
+const MA = {
+  LOAN_ID: 0,
+  FRIENDLY_NAME: 1,
+  BORROWER_NAME: 2,
+  BORROWER_LOAN_COUNT: 3,
+  GUARANTORS: 4,
+  APPLICATION_DATE: 5,
+  CREDIT_SCORE: 6,
+  PRODUCT_TYPE: 7,
+  LOAN_PURPOSE: 8,
+  STREET: 9,
+  STATE: 10,
+  COUNTY: 11,
+  CITY: 12,
+  ZIP_CODE: 13,
+  LEGAL_DESC: 14,
+  ESTIMATED_VALUE: 17,
+  LTV: 20,
+  LIVING_SPACE: 23,
+  PROPERTY_TYPE: 25,
+  OCCUPANCY: 29,
+  YEAR_BUILT: 30,
+  APPRAISAL_AMOUNT: 31,
+  APPRAISAL_DATE: 32,
+  POSITION: 33,
+  PURCHASE_PRICE: 34,
+  DOWN_PAYMENT: 35,
+  LOAN_AMOUNT: 37,
+  TOTAL_FACILITY: 38,
+  LIEN_HOLDBACK: 39,
+  STANDBY_RATE: 41,
+  REHAB_AMOUNT: 42,
+  ARV: 43,
+  INTEREST_RATE_TYPE: 44,
+  INTEREST_RATE: 45,
+  REPAYMENT_TYPE: 48,
+  HOLDBACK_PPI_IR: 51,
+  TERM: 53,
+  PAYMENT_FREQUENCY: 54,
+  LENDER_FEES: 59,
+  ORIG_FEES: 60,
+  BROKER_FEE: 61,
+  EXPECTED_CLOSING: 64,
+  FUNDING_DATE: 65,
+  CLOSING_DATE: 66,
+  FIRST_PAYMENT: 67,
+  ORIGINAL_MATURITY: 69,
+  EXPECTED_MATURITY: 70,
+  PRINCIPAL_OUTSTANDING: 71,
+  CURRENT_TOTAL_FACILITY: 72,
+  FUNDS_ADVANCED: 73,
+  OUTSTANDING_FACILITY: 74,
+  MONTHLY_PAYMENT: 76,
+  CURRENT_INVESTORS: 77,
+};
+
+// Churchill RTL Tape v5 column headers (63 columns, exact order)
+const RTL_COLUMNS = [
+  'Loan ID',                                    // 0  -> A
+  'Funding Type',                               // 1  -> B
+  'Review Type',                                // 2  -> C
+  'Loan Type',                                  // 3  -> D
+  'Cash Out Flag',                              // 4  -> E
+  'Cash Out Amount - Estimate',                 // 5  -> F
+  'Cash Out Amount - Final',                    // 6  -> G
+  'New Construction Flag',                      // 7  -> H
+  'Address',                                    // 8  -> I
+  'City',                                       // 9  -> J
+  'State',                                      // 10 -> K
+  'Zip Code',                                   // 11 -> L
+  'Borrowing Entity',                           // 12 -> M
+  'FICO',                                       // 13 -> N
+  'Cash Reserves',                              // 14 -> O
+  'Borrower Experience - Number of Projects',   // 15 -> P
+  'Borrower Experience - $ Value of Projects',  // 16 -> Q
+  'Exit Strategy',                              // 17 -> R
+  'Foreign National Flag',                      // 18 -> S
+  'Guaranty Type',                              // 19 -> T
+  'Borrower Funded Interest Reserve',           // 20 -> U
+  'Property Type',                              // 21 -> V
+  'Number of Properties',                       // 22 -> W
+  'Number of Units',                            // 23 -> X
+  'UPB',                                        // 24 -> Y
+  'Day 1 Loan Amount',                          // 25 -> Z
+  'Holdback Loan Amount',                       // 26 -> AA
+  'Interest Reserve Amount',                    // 27 -> AB
+  'Total Loan Amount',                          // 28 -> AC
+  'Disbursed Holdback Amount',                  // 29 -> AD
+  'Disbursed Interest Reserve',                 // 30 -> AE
+  'Accrual Type',                               // 31 -> AF
+  'Appraisal Date',                             // 32 -> AG
+  'Appraisal Source',                           // 33 -> AH
+  'AIV',                                        // 34 -> AI
+  'ARV',                                        // 35 -> AJ
+  'Market Rent',                                // 36 -> AK
+  'Property Acquisition Date',                  // 37 -> AL
+  'Purchase Price',                             // 38 -> AM
+  'Wholesale Fee',                              // 39 -> AN
+  'Remaining Budget',                           // 40 -> AO
+  'Costs Spent to Date',                        // 41 -> AP
+  'Total Project Costs',                        // 42 -> AQ  (FORMULA)
+  'LTAIV',                                      // 43 -> AR  (FORMULA)
+  'LTC',                                        // 44 -> AS  (FORMULA)
+  'LTARV',                                      // 45 -> AT  (FORMULA)
+  'Pre-Rehab Sq. Ft.',                          // 46 -> AU
+  'Post Rehab Sq. Ft.',                         // 47 -> AV
+  'Term',                                       // 48 -> AW
+  'Estimated Origination Date',                 // 49 -> AX
+  'Origination Date',                           // 50 -> AY
+  'First Payment Date',                         // 51 -> AZ
+  'Original Maturity Date',                     // 52 -> BA
+  'Current Maturity Date',                      // 53 -> BB
+  'Next Payment Due Date',                      // 54 -> BC
+  'Interest Rate Type',                         // 55 -> BD
+  'Interest Rate',                              // 56 -> BE
+  'Interest Accrual Type',                      // 57 -> BF
+  'Total Origination Points',                   // 58 -> BG
+  'Cross Collateralization Flag',               // 59 -> BH
+  'Extension Flag',                             // 60 -> BI
+  'Deal Description',                           // 61 -> BJ
+  'Originator Entity Name',                     // 62 -> BK
+];
+
+// RTL column index sets for formatting
+const DATE_COLS = new Set([32, 37, 49, 50, 51, 52, 53, 54]);
+const MONEY_COLS = new Set([5, 6, 14, 16, 24, 25, 26, 27, 28, 29, 30, 34, 35, 36, 38, 39, 40, 41, 42]);
+const PCT_COLS = new Set([43, 44, 45]);
+const FORMULA_COLS = new Set([42, 43, 44, 45]);
+const SQFT_COLS = new Set([46, 47]);
+
+// Property type mapping: MA -> Churchill
+const PROPERTY_TYPE_MAP = {
+  'detached': 'Single Family',
+  'residential': 'Single Family',
+  'house': 'Single Family',
+  'single family': 'Single Family',
+  'sfr': 'Single Family',
+  'condo': 'Condo',
+  'condominium': 'Condo',
+  'townhouse': 'Townhouse',
+  'row/town house': 'Townhouse',
+  'row/townhouse': 'Townhouse',
+  'duplex': '2 - 4 Unit',
+  'triplex': '2 - 4 Unit',
+  'fourplex': '2 - 4 Unit',
+  'apartment': '2 - 4 Unit',
+  'multi-family': 'Multi Family',
+  'mixed use': 'Mixed Use',
+  'commercial': 'Commercial',
+  'land': null,
+  'other': null,
+};
+
+// Column widths for RTL xlsx output (63 entries, matching converter.py)
+const COL_WIDTHS = [
+  12, 14, 16, 22, 12, 18, 18, 18,
+  28, 16, 8, 10, 30, 8, 14, 18,
+  18, 12, 16, 14, 18, 16, 14, 12,
+  14, 16, 16, 16, 16, 16, 16,
+  12, 14, 16, 14, 14, 12, 16,
+  14, 12, 14, 16, 16, 10, 10, 10,
+  14, 14, 8, 16, 16, 16, 16,
+  16, 16, 14, 12, 14, 16, 14,
+  12, 40, 24,
+];
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 2: UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+function safeFloat(val, def = null) {
+  if (val == null || val === '-' || val === '' || val === 'None') return def;
+  if (typeof val === 'number') return val;
+  const s = String(val).replace(/[$,%\s]/g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? def : n;
+}
+
+function safeInt(val, def = null) {
+  const f = safeFloat(val);
+  return f == null ? def : Math.floor(f);
+}
+
+function safeStr(val, def = '') {
+  if (val == null || val === '-' || val === 'None') return def;
+  return String(val).trim();
+}
+
+function parseMADate(val) {
+  if (val == null || val === '-' || val === '' || val === 'None') return null;
+  // Excel serial date number
+  if (typeof val === 'number') {
+    // Excel epoch is Jan 0, 1900 (with the 1900 leap year bug)
+    const epoch = new Date(1899, 11, 30);
+    const d = new Date(epoch.getTime() + val * 86400000);
+    if (!isNaN(d.getTime())) return d;
+    return null;
+  }
+  const s = String(val).trim();
+  // Try "Month DD, YYYY" (e.g. "December 3, 2025")
+  const longMatch = s.match(/^(\w+)\s+(\d{1,2}),?\s*(\d{4})$/);
+  if (longMatch) {
+    const d = new Date(`${longMatch[1]} ${longMatch[2]}, ${longMatch[3]}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Try MM/DD/YYYY
+  const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    const d = new Date(+slashMatch[3], +slashMatch[1] - 1, +slashMatch[2]);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Try YYYY-MM-DD
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const d = new Date(+isoMatch[1], +isoMatch[2] - 1, +isoMatch[3]);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Fallback: try native Date parsing
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatDateYMD(d) {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatMoney(val) {
+  if (val == null) return '';
+  const n = typeof val === 'number' ? val : safeFloat(val);
+  if (n == null) return '';
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function formatPct(val) {
+  if (val == null) return '';
+  return (val * 100).toFixed(2) + '%';
+}
+
+function formatNum(val) {
+  if (val == null) return '';
+  const n = typeof val === 'number' ? val : safeFloat(val);
+  if (n == null) return '';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 3: BUSINESS LOGIC
+// ═══════════════════════════════════════════════════════════════
+
+function determineLoanType(productType, rehabAmount, purchasePrice, isRefi) {
+  const pt = safeStr(productType).toLowerCase();
+  const rehab = safeFloat(rehabAmount, 0);
+
+  if (isRefi) {
+    return rehab > 0 ? 'Refinance w/ Holdback' : 'Bridge - R/T Refinance';
+  }
+  // Purchase
+  if (pt === 'construction') return 'Purchase w/ Holdback ';
+  if (rehab > 0) return 'Purchase w/ Holdback ';
+  return 'Bridge - Purchase';
+}
+
+function mapPropertyType(maType) {
+  if (!maType || maType === '-') return null;
+  const key = String(maType).trim().toLowerCase();
+  return PROPERTY_TYPE_MAP.hasOwnProperty(key) ? PROPERTY_TYPE_MAP[key] : null;
+}
+
+function isNewConstruction(productType) {
+  return safeStr(productType).toLowerCase() === 'construction' ? 'Yes' : 'No';
+}
+
+function determineExitStrategy() {
+  return 'Sell ';
+}
+
+function generateDealDescription(loan) {
+  const propType = loan.propertyTypeChurchill || 'Property';
+  const rehab = safeFloat(loan.rehabAmount, 0);
+  const rehabLabel = rehab < 80000 ? 'light' : 'heavy';
+  const pp = safeFloat(loan.purchasePrice, 0);
+  const aiv = safeFloat(loan.aiv, 0);
+  const arv = safeFloat(loan.arv, 0);
+  const totalLoan = safeFloat(loan.totalLoan, 0);
+  const day1 = safeFloat(loan.day1, 0);
+  const holdback = safeFloat(loan.holdback, 0);
+
+  const lines = [];
+  if (rehab > 0) {
+    lines.push(`${propType} ${rehabLabel} rehab.`);
+  } else {
+    lines.push(`${propType} bridge loan.`);
+  }
+  lines.push('');
+  lines.push(`Property Address: ${loan.address || ''}, ${loan.city || ''}, ${loan.state || ''} ${loan.zipCode || ''}`);
+  lines.push(`Property Type: ${propType}`);
+  lines.push(`Loan Type: ${loan.isRefi ? 'Refinance' : 'Purchase'}`);
+  if (!loan.isRefi && pp) lines.push(`Purchase Price: $${pp.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (aiv) lines.push(`As is Value: $${aiv.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (rehab > 0) lines.push(`Construction Budget Remaining: $${rehab.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (arv) lines.push(`ARV: $${arv.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (totalLoan) lines.push(`Total Loan Amount: $${totalLoan.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (day1) lines.push(`Day 1 Loan Amount Requested: $${day1.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (holdback > 0) lines.push(`Construction Financed: $${holdback.toLocaleString('en-US', {maximumFractionDigits:0})}`);
+  if (loan.ltaiv != null) lines.push(`Day 1 LTAIV: ${(loan.ltaiv * 100).toFixed(1)}%`);
+  if (loan.ltc != null) lines.push(`LTC: ${(loan.ltc * 100).toFixed(1)}%`);
+  if (loan.ltarv != null) lines.push(`LTARV: ${(loan.ltarv * 100).toFixed(1)}%`);
+  if (loan.interestRate) lines.push(`Borrower Rate: ${loan.interestRate}%`);
+  if (loan.term) lines.push(`Loan Term: ${loan.term} months`);
+  lines.push('Credit Score: [MANUAL ENTRY]');
+  lines.push('Liquidity: [MANUAL ENTRY]');
+  lines.push('Borrower Experience: [MANUAL ENTRY]');
+  return lines.join('\n');
+}
+
+function calculateNextPayment(firstPayment) {
+  if (!firstPayment) return null;
+  const today = new Date();
+  if (firstPayment > today) return firstPayment;
+  const npd = new Date(firstPayment);
+  let safety = 0;
+  while (npd <= today && safety < 600) {
+    const m = npd.getMonth();
+    if (m === 11) {
+      npd.setFullYear(npd.getFullYear() + 1);
+      npd.setMonth(0);
+    } else {
+      npd.setMonth(m + 1);
+    }
+    safety++;
+  }
+  return npd;
+}
+
+/**
+ * Transform one MA loan row into an RTL Tape row.
+ * Returns { rtlRow: array[63], manualFields: Set<colIndex>, warnings: string[] }
+ */
+function transformLoan(row, originator) {
+  const manualFields = new Set();
+  const warnings = [];
+
+  // Extract source fields
+  const loanId = safeStr(row[MA.LOAN_ID]);
+  const borrowerName = safeStr(row[MA.BORROWER_NAME]);
+  const creditScore = safeStr(row[MA.CREDIT_SCORE]);
+  const productType = safeStr(row[MA.PRODUCT_TYPE]);
+  const address = safeStr(row[MA.STREET]);
+  const state = safeStr(row[MA.STATE]);
+  const city = safeStr(row[MA.CITY]);
+  const zipCode = safeStr(row[MA.ZIP_CODE]);
+  const estimatedValue = safeFloat(row[MA.ESTIMATED_VALUE]);
+  const livingSpace = safeFloat(row[MA.LIVING_SPACE]);
+  const propertyTypeMA = safeStr(row[MA.PROPERTY_TYPE]);
+  const appraisalDate = parseMADate(row[MA.APPRAISAL_DATE]);
+  const purchasePrice = safeFloat(row[MA.PURCHASE_PRICE]);
+  const loanAmount = safeFloat(row[MA.LOAN_AMOUNT]);
+  const totalFacility = safeFloat(row[MA.TOTAL_FACILITY]);
+  const rehabAmount = safeFloat(row[MA.REHAB_AMOUNT], 0);
+  const arvVal = safeFloat(row[MA.ARV]);
+  const interestRateType = safeStr(row[MA.INTEREST_RATE_TYPE]);
+  const interestRate = safeFloat(row[MA.INTEREST_RATE]);
+  const holdbackPpiIr = safeFloat(row[MA.HOLDBACK_PPI_IR], 0);
+  const term = safeInt(row[MA.TERM]);
+  const expectedClosing = parseMADate(row[MA.EXPECTED_CLOSING]);
+  const fundingDate = parseMADate(row[MA.FUNDING_DATE]);
+  const closingDate = parseMADate(row[MA.CLOSING_DATE]);
+  const firstPayment = parseMADate(row[MA.FIRST_PAYMENT]);
+  const originalMaturity = parseMADate(row[MA.ORIGINAL_MATURITY]);
+  const principalOutstanding = safeFloat(row[MA.PRINCIPAL_OUTSTANDING]);
+
+  // Refi detection
+  const isRefi = (purchasePrice == null || purchasePrice === 0);
+
+  // Property type mapping
+  let propTypeChurchill = mapPropertyType(propertyTypeMA);
+  if (propTypeChurchill == null) {
+    propTypeChurchill = '[REVIEW: ' + (propertyTypeMA || 'Unknown') + ']';
+    warnings.push(`Property type '${propertyTypeMA}' not in Churchill mapping`);
+    manualFields.add(21);
+  }
+
+  // Loan type
+  const loanType = determineLoanType(productType, rehabAmount, purchasePrice, isRefi);
+
+  // Financial calculations
+  const day1 = loanAmount || 0;
+  let totalLoan;
+  if (totalFacility && totalFacility > 0) {
+    totalLoan = totalFacility;
+  } else if (rehabAmount > 0) {
+    totalLoan = day1 + rehabAmount;
+  } else {
+    totalLoan = day1;
+  }
+  const irAmount = holdbackPpiIr || 0;
+  const holdback = Math.max(0, totalLoan - day1 - irAmount);
+  const aiv = estimatedValue;
+  const upb = principalOutstanding || day1;
+
+  // Costs Spent
+  let costsSpent;
+  if (isRefi) {
+    costsSpent = null;
+    manualFields.add(41);
+  } else {
+    costsSpent = purchasePrice;
+  }
+
+  const remainingBudget = rehabAmount;
+
+  // TPC (static value for table display; xlsx will use formula)
+  let tpc;
+  if (isRefi) {
+    tpc = (aiv || 0) + remainingBudget;
+  } else {
+    const base = (purchasePrice && aiv && purchasePrice > 0 && aiv > 0)
+      ? Math.min(purchasePrice, aiv)
+      : (purchasePrice || aiv || 0);
+    tpc = base + remainingBudget;
+  }
+
+  // Ratios
+  const ltaiv = (aiv && aiv > 0 && day1 > 0) ? (day1 / aiv) : null;
+  const ltc = (tpc && tpc > 0 && totalLoan > 0) ? (totalLoan / tpc) : null;
+  const ltarv = (arvVal && arvVal > 0 && totalLoan > 0) ? (totalLoan / arvVal) : null;
+
+  // Dates
+  const originationDate = closingDate || fundingDate;
+  const estimatedOrig = expectedClosing || closingDate;
+  const currentMaturity = originalMaturity;
+  const nextPayment = calculateNextPayment(firstPayment);
+  const acquisitionDate = isRefi ? null : originationDate;
+  if (isRefi) manualFields.add(37);
+
+  // Interest rate type
+  const rateTypeChurchill = (interestRateType && interestRateType.toLowerCase() === 'variable') ? 'ARM' : 'Fixed';
+
+  // FICO
+  let fico = null;
+  if (creditScore) {
+    const f = parseFloat(creditScore);
+    if (!isNaN(f)) fico = Math.floor(f);
+  }
+  if (!fico) manualFields.add(13);
+
+  // Sq ft
+  if (!livingSpace) {
+    manualFields.add(46);
+    manualFields.add(47);
+  }
+
+  // Number of Units
+  let numUnits = 1;
+  if (propTypeChurchill === '2 - 4 Unit' || propTypeChurchill === 'Multi Family') {
+    manualFields.add(23);
+    numUnits = null;
+  }
+
+  // Cash out (refi)
+  let cashOutFlag = isRefi ? null : 'N';
+  let cashOutEst = isRefi ? null : 0;
+  let cashOutFinal = isRefi ? null : 0;
+  if (isRefi) {
+    manualFields.add(4);
+    manualFields.add(5);
+    manualFields.add(6);
+    manualFields.add(38); // Purchase Price
+  }
+
+  // Always-manual fields
+  manualFields.add(14); // Cash Reserves
+  manualFields.add(15); // Borrower Experience - Number
+  manualFields.add(16); // Borrower Experience - $ Value
+  manualFields.add(39); // Wholesale Fee
+  manualFields.add(58); // Total Origination Points
+
+  // Build loan data for deal description
+  const loanData = {
+    propertyTypeChurchill: propTypeChurchill,
+    rehabAmount, purchasePrice, aiv, arv: arvVal, totalLoan,
+    day1, holdback, ltaiv, ltc, ltarv,
+    interestRate, term, address, city, state, zipCode, isRefi,
+  };
+  const dealDesc = generateDealDescription(loanData);
+
+  // Build RTL row (63 elements, matching RTL_COLUMNS order)
+  const rtlRow = [
+    loanId,                           // 0  Loan ID
+    'Closed Loan',                    // 1  Funding Type
+    'Preliminary Review',             // 2  Review Type
+    loanType,                         // 3  Loan Type
+    cashOutFlag,                      // 4  Cash Out Flag
+    cashOutEst,                       // 5  Cash Out Amount - Estimate
+    cashOutFinal,                     // 6  Cash Out Amount - Final
+    isNewConstruction(productType),   // 7  New Construction Flag
+    address,                          // 8  Address
+    city,                             // 9  City
+    state,                            // 10 State
+    zipCode,                          // 11 Zip Code
+    borrowerName,                     // 12 Borrowing Entity
+    fico,                             // 13 FICO
+    null,                             // 14 Cash Reserves (manual)
+    null,                             // 15 Borrower Exp - Number (manual)
+    null,                             // 16 Borrower Exp - $ Value (manual)
+    determineExitStrategy(),          // 17 Exit Strategy
+    'No',                             // 18 Foreign National Flag
+    'Full',                           // 19 Guaranty Type
+    'No',                             // 20 Borrower Funded IR
+    propTypeChurchill,                // 21 Property Type
+    1,                                // 22 Number of Properties
+    numUnits || 1,                    // 23 Number of Units
+    upb,                              // 24 UPB
+    day1,                             // 25 Day 1 Loan Amount
+    holdback,                         // 26 Holdback Loan Amount
+    irAmount,                         // 27 Interest Reserve Amount
+    totalLoan,                        // 28 Total Loan Amount
+    0,                                // 29 Disbursed Holdback Amount
+    0,                                // 30 Disbursed Interest Reserve
+    '30/360',                         // 31 Accrual Type
+    appraisalDate,                    // 32 Appraisal Date
+    'Non AMC Appraisal',              // 33 Appraisal Source
+    aiv,                              // 34 AIV
+    arvVal,                           // 35 ARV
+    null,                             // 36 Market Rent (manual if rental)
+    acquisitionDate,                  // 37 Property Acquisition Date
+    isRefi ? null : purchasePrice,    // 38 Purchase Price
+    null,                             // 39 Wholesale Fee (manual)
+    remainingBudget,                  // 40 Remaining Budget
+    costsSpent,                       // 41 Costs Spent to Date
+    tpc > 0 ? tpc : null,            // 42 Total Project Costs (formula)
+    ltaiv,                            // 43 LTAIV (formula)
+    ltc,                              // 44 LTC (formula)
+    ltarv,                            // 45 LTARV (formula)
+    livingSpace,                      // 46 Pre-Rehab Sq. Ft.
+    livingSpace,                      // 47 Post Rehab Sq. Ft.
+    term,                             // 48 Term
+    estimatedOrig,                    // 49 Estimated Origination Date
+    originationDate,                  // 50 Origination Date
+    firstPayment,                     // 51 First Payment Date
+    originalMaturity,                 // 52 Original Maturity Date
+    currentMaturity,                  // 53 Current Maturity Date
+    nextPayment,                      // 54 Next Payment Due Date
+    rateTypeChurchill,                // 55 Interest Rate Type
+    interestRate,                     // 56 Interest Rate
+    'As Disbursed',                   // 57 Interest Accrual Type
+    null,                             // 58 Total Origination Points (manual)
+    'N',                              // 59 Cross Collateralization Flag
+    'N',                              // 60 Extension Flag
+    dealDesc,                         // 61 Deal Description
+    originator,                       // 62 Originator Entity Name
+  ];
+
+  return { rtlRow, manualFields, warnings };
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 4: FILE READING (SheetJS)
+// ═══════════════════════════════════════════════════════════════
+
+function readMAFile(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: false, raw: true });
+
+  // Find "Funded Loans" tab (case-insensitive)
+  let sheetName = null;
+  for (const name of wb.SheetNames) {
+    if (name.trim().toLowerCase() === 'funded loans') {
+      sheetName = name;
+      break;
+    }
+  }
+  if (!sheetName) {
+    throw new Error(`Tab "Funded Loans" not found. Available tabs: ${wb.SheetNames.join(', ')}`);
+  }
+
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+
+  return rows; // row 0 = headers, rows 1+ = data
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 5: MANIFEST (localStorage)
+// ═══════════════════════════════════════════════════════════════
+
+const MANIFEST_KEY = 'legacy_loan_tape_manifest';
+
+function loadManifest() {
+  try {
+    const data = localStorage.getItem(MANIFEST_KEY);
+    return data ? JSON.parse(data) : { processed: {} };
+  } catch { return { processed: {} }; }
+}
+
+function saveManifest(manifest) {
+  localStorage.setItem(MANIFEST_KEY, JSON.stringify(manifest));
+}
+
+function isProcessed(loanId) {
+  const m = loadManifest();
+  return !!m.processed[String(loanId)];
+}
+
+function markProcessed(loanIds) {
+  const m = loadManifest();
+  const today = formatDateYMD(new Date());
+  for (const id of loanIds) {
+    m.processed[String(id)] = today;
+  }
+  saveManifest(m);
+}
+
+function clearManifest() {
+  localStorage.removeItem(MANIFEST_KEY);
+  renderHistory();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 6: GLOBAL STATE
+// ═══════════════════════════════════════════════════════════════
+
+let convertedLoans = [];   // Array of { rtlRow, manualFields, warnings, loanId }
+let skippedLoans = [];
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 7: EDITABLE TABLE
+// ═══════════════════════════════════════════════════════════════
+
+function recalcFormulas(loanIdx) {
+  const row = convertedLoans[loanIdx].rtlRow;
+  const day1 = safeFloat(row[25], 0);
+  const aiv = safeFloat(row[34], 0);
+  const arvVal = safeFloat(row[35], 0);
+  const totalLoan = safeFloat(row[28], 0);
+  const pp = safeFloat(row[38], 0);
+  const wholesale = safeFloat(row[39], 0);
+  const remaining = safeFloat(row[40], 0);
+
+  // TPC
+  let base;
+  if (pp === 0 || pp == null) {
+    base = aiv;
+  } else if (aiv > 0) {
+    base = Math.min(pp, aiv);
+  } else {
+    base = pp;
+  }
+  const tpc = (base || 0) + remaining + wholesale;
+  row[42] = tpc > 0 ? tpc : null;
+
+  // LTAIV
+  row[43] = (aiv > 0 && day1 > 0) ? (day1 / aiv) : null;
+
+  // LTC
+  row[44] = (tpc > 0 && totalLoan > 0) ? (totalLoan / tpc) : null;
+
+  // LTARV
+  row[45] = (arvVal > 0 && totalLoan > 0) ? (totalLoan / arvVal) : null;
+}
+
+function formatCellDisplay(val, colIdx) {
+  if (val == null) return '';
+  if (DATE_COLS.has(colIdx)) return val instanceof Date ? formatDateYMD(val) : safeStr(val);
+  if (MONEY_COLS.has(colIdx)) return formatMoney(val);
+  if (PCT_COLS.has(colIdx)) return formatPct(val);
+  if (SQFT_COLS.has(colIdx)) return formatNum(val);
+  if (colIdx === 56 && typeof val === 'number') return val.toFixed(2) + '%'; // Interest Rate
+  return safeStr(val);
+}
+
+function cellClass(colIdx, isManual) {
+  const classes = [];
+  if (isManual) classes.push('manual-cell');
+  if (FORMULA_COLS.has(colIdx)) classes.push('formula-cell');
+  if (DATE_COLS.has(colIdx)) classes.push('date-cell');
+  if (MONEY_COLS.has(colIdx)) classes.push('money-cell');
+  if (PCT_COLS.has(colIdx)) classes.push('pct-cell');
+  if (colIdx === 61) classes.push('desc-cell');
+  return classes.join(' ');
+}
+
+function renderTable() {
+  const thead = document.getElementById('tableHead');
+  const tbody = document.getElementById('tableBody');
+
+  // Header
+  let headerHtml = '<tr>';
+  headerHtml += '<th>#</th>';
+  for (let i = 0; i < RTL_COLUMNS.length; i++) {
+    headerHtml += `<th title="${RTL_COLUMNS[i]}">${RTL_COLUMNS[i]}</th>`;
+  }
+  headerHtml += '</tr>';
+  thead.innerHTML = headerHtml;
+
+  // Body
+  let bodyHtml = '';
+  for (let li = 0; li < convertedLoans.length; li++) {
+    const { rtlRow, manualFields } = convertedLoans[li];
+    const manualLeft = countManualEmpty(li);
+    const statusClass = manualLeft === 0 ? 'complete' : 'incomplete';
+
+    bodyHtml += '<tr>';
+    bodyHtml += `<td><span class="row-status ${statusClass}"></span>${li + 1}</td>`;
+
+    for (let ci = 0; ci < RTL_COLUMNS.length; ci++) {
+      const isManual = manualFields.has(ci);
+      const isFormula = FORMULA_COLS.has(ci);
+      const cls = cellClass(ci, isManual);
+      const val = rtlRow[ci];
+
+      if (isManual && !isFormula) {
+        const displayVal = (val == null || val === '') ? '' : val;
+        const inputType = (MONEY_COLS.has(ci) || PCT_COLS.has(ci) || ci === 13 || ci === 15 || ci === 58 || SQFT_COLS.has(ci)) ? 'number' : 'text';
+        bodyHtml += `<td class="${cls}"><input type="${inputType}" value="${escapeAttr(displayVal)}" data-loan="${li}" data-col="${ci}" step="any"></td>`;
+      } else {
+        const display = isFormula ? formatCellDisplay(val, ci) : formatCellDisplay(val, ci);
+        const title = ci === 61 ? escapeHtml(safeStr(val)).substring(0, 200) : '';
+        bodyHtml += `<td class="${cls}" ${ci === 61 ? `title="${title}"` : ''} data-formula-loan="${isFormula ? li : ''}" data-formula-col="${isFormula ? ci : ''}">${escapeHtml(display)}</td>`;
+      }
+    }
+    bodyHtml += '</tr>';
+  }
+  tbody.innerHTML = bodyHtml;
+  updateStats();
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeAttr(s) {
+  if (s == null) return '';
+  return String(s).replace(/"/g, '&quot;').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function countManualEmpty(loanIdx) {
+  const { rtlRow, manualFields } = convertedLoans[loanIdx];
+  let count = 0;
+  for (const ci of manualFields) {
+    if (FORMULA_COLS.has(ci)) continue;
+    const val = rtlRow[ci];
+    if (val == null || val === '' || val === '[MANUAL]') count++;
+  }
+  return count;
+}
+
+function updateStats() {
+  const totalManual = convertedLoans.reduce((sum, _, i) => sum + countManualEmpty(i), 0);
+  const totalVolume = convertedLoans.reduce((sum, l) => sum + (safeFloat(l.rtlRow[28], 0)), 0);
+
+  document.getElementById('statLoans').textContent = convertedLoans.length;
+  document.getElementById('statManual').textContent = totalManual;
+  document.getElementById('statSkipped').textContent = skippedLoans.length;
+  document.getElementById('statVolume').textContent = formatMoney(totalVolume);
+  document.getElementById('loanCount').textContent = `${convertedLoans.length} loan${convertedLoans.length !== 1 ? 's' : ''}`;
+  document.getElementById('manualCount').textContent = totalManual > 0 ? `${totalManual} manual field${totalManual !== 1 ? 's' : ''} remaining` : 'All fields complete';
+}
+
+function handleCellEdit(loanIdx, colIdx, newValue) {
+  const loan = convertedLoans[loanIdx];
+  // Parse the value appropriately
+  if (MONEY_COLS.has(colIdx) || SQFT_COLS.has(colIdx)) {
+    loan.rtlRow[colIdx] = safeFloat(newValue);
+  } else if (colIdx === 13 || colIdx === 15 || colIdx === 58) {
+    loan.rtlRow[colIdx] = safeInt(newValue);
+  } else if (DATE_COLS.has(colIdx)) {
+    loan.rtlRow[colIdx] = parseMADate(newValue);
+  } else {
+    loan.rtlRow[colIdx] = newValue === '' ? null : newValue;
+  }
+
+  // Recalc formulas if dependent field changed
+  const formulaDeps = new Set([25, 28, 34, 35, 38, 39, 40]); // day1, totalLoan, AIV, ARV, PP, Wholesale, Remaining
+  if (formulaDeps.has(colIdx)) {
+    recalcFormulas(loanIdx);
+    // Update formula display cells
+    for (const fi of FORMULA_COLS) {
+      const cell = document.querySelector(`td[data-formula-loan="${loanIdx}"][data-formula-col="${fi}"]`);
+      if (cell) cell.textContent = formatCellDisplay(loan.rtlRow[fi], fi);
+    }
+  }
+
+  // Update row status
+  const rowEl = document.getElementById('tableBody').children[loanIdx];
+  if (rowEl) {
+    const statusSpan = rowEl.querySelector('.row-status');
+    if (statusSpan) {
+      const left = countManualEmpty(loanIdx);
+      statusSpan.className = 'row-status ' + (left === 0 ? 'complete' : 'incomplete');
+    }
+  }
+  updateStats();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 8: EXCEL WRITING (ExcelJS)
+// ═══════════════════════════════════════════════════════════════
+
+async function generateRTLTape() {
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('Churchill Real Estate Tape v5');
+
+  const thinBorder = {
+    top: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+    bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+    left: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+    right: { style: 'thin', color: { argb: 'FFD0D0D0' } },
+  };
+
+  // Column widths
+  for (let i = 0; i < COL_WIDTHS.length; i++) {
+    ws.getColumn(i + 1).width = COL_WIDTHS[i];
+  }
+
+  // Row 3: Headers
+  const headerRow = ws.getRow(3);
+  for (let i = 0; i < RTL_COLUMNS.length; i++) {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = RTL_COLUMNS[i];
+    cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3A5C' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = thinBorder;
+  }
+  headerRow.height = 30;
+
+  // Data rows (starting row 4)
+  for (let li = 0; li < convertedLoans.length; li++) {
+    const { rtlRow, manualFields } = convertedLoans[li];
+    const rowNum = li + 4;
+    const excelRow = ws.getRow(rowNum);
+
+    for (let ci = 0; ci < RTL_COLUMNS.length; ci++) {
+      const cell = excelRow.getCell(ci + 1);
+      cell.font = { name: 'Calibri', size: 10 };
+      cell.border = thinBorder;
+
+      // Formula columns
+      if (ci === 42) { // TPC
+        cell.value = { formula: `IF(AM${rowNum}="",AI${rowNum}+AO${rowNum}+AN${rowNum},MIN(AM${rowNum},AI${rowNum})+AO${rowNum}+AN${rowNum})` };
+        cell.numFmt = '#,##0';
+        continue;
+      } else if (ci === 43) { // LTAIV
+        cell.value = { formula: `IF(AI${rowNum}=0,"",Z${rowNum}/AI${rowNum})` };
+        cell.numFmt = '0.00%';
+        continue;
+      } else if (ci === 44) { // LTC
+        cell.value = { formula: `IF(AQ${rowNum}=0,"",AC${rowNum}/AQ${rowNum})` };
+        cell.numFmt = '0.00%';
+        continue;
+      } else if (ci === 45) { // LTARV
+        cell.value = { formula: `IF(AJ${rowNum}=0,"",AC${rowNum}/AJ${rowNum})` };
+        cell.numFmt = '0.00%';
+        continue;
+      }
+
+      const val = rtlRow[ci];
+      const isManual = manualFields.has(ci);
+
+      // Manual field styling
+      if (isManual && (val == null || val === '' || val === '[MANUAL]')) {
+        cell.value = '[MANUAL]';
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+        cell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF999999' } };
+        continue;
+      }
+
+      // Write value with formatting
+      if (val != null) {
+        if (DATE_COLS.has(ci) && val instanceof Date) {
+          cell.value = val;
+          cell.numFmt = 'YYYY-MM-DD';
+        } else if (MONEY_COLS.has(ci) && typeof val === 'number') {
+          cell.value = val;
+          cell.numFmt = '#,##0';
+        } else if (SQFT_COLS.has(ci) && typeof val === 'number') {
+          cell.value = val;
+          cell.numFmt = '#,##0';
+        } else {
+          cell.value = val;
+        }
+
+        if (isManual) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+        }
+      }
+    }
+  }
+
+  // Freeze panes at A4
+  ws.views = [{ state: 'frozen', ySplit: 3, xSplit: 0 }];
+
+  // Auto-filter on header row
+  ws.autoFilter = {
+    from: { row: 3, column: 1 },
+    to: { row: 3, column: RTL_COLUMNS.length },
+  };
+
+  // Generate and download
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rtl_tape_output_${formatDateYMD(new Date())}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 9: REPORT
+// ═══════════════════════════════════════════════════════════════
+
+function generateReportText() {
+  const lines = [];
+  lines.push('='.repeat(70));
+  lines.push('LEGACY LOAN TAPE CONVERTER - PROCESSING REPORT');
+  lines.push(`Generated: ${new Date().toLocaleString()}`);
+  lines.push('='.repeat(70));
+  lines.push('');
+  lines.push(`Loans processed: ${convertedLoans.length}`);
+  lines.push(`Loans skipped (already in manifest): ${skippedLoans.length}`);
+  lines.push('');
+
+  if (convertedLoans.length) {
+    lines.push('-'.repeat(70));
+    lines.push('PROCESSED LOANS');
+    lines.push('-'.repeat(70));
+
+    for (const loan of convertedLoans) {
+      const r = loan.rtlRow;
+      const lid = r[0];
+      const addr = r[8];
+      const entity = r[12];
+      const total = r[28];
+      const totalStr = total ? formatMoney(total) : 'N/A';
+
+      lines.push('');
+      lines.push(`  Loan ${lid}: ${addr}`);
+      lines.push(`    Borrower: ${entity}`);
+      lines.push(`    Total Loan: ${totalStr}`);
+      lines.push(`    Loan Type: ${r[3]}`);
+
+      const manualList = [];
+      for (const ci of loan.manualFields) {
+        if (!FORMULA_COLS.has(ci)) manualList.push(RTL_COLUMNS[ci]);
+      }
+      if (manualList.length) {
+        lines.push(`    Manual fields needed (${manualList.length}):`);
+        for (const mf of manualList.sort()) {
+          lines.push(`      - ${mf}`);
+        }
+      }
+      if (loan.warnings.length) {
+        lines.push(`    Warnings:`);
+        for (const w of loan.warnings) {
+          lines.push(`      - ${w}`);
+        }
+      }
+    }
+  }
+
+  if (skippedLoans.length) {
+    lines.push('');
+    lines.push('-'.repeat(70));
+    lines.push('SKIPPED LOANS (already processed)');
+    lines.push('-'.repeat(70));
+    for (const lid of skippedLoans) {
+      lines.push(`  Loan ${lid}`);
+    }
+  }
+
+  // Manual entry summary
+  lines.push('');
+  lines.push('-'.repeat(70));
+  lines.push('MANUAL ENTRY SUMMARY');
+  lines.push('-'.repeat(70));
+
+  const fieldCounts = {};
+  for (const loan of convertedLoans) {
+    for (const ci of loan.manualFields) {
+      if (FORMULA_COLS.has(ci)) continue;
+      const name = RTL_COLUMNS[ci];
+      fieldCounts[name] = (fieldCounts[name] || 0) + 1;
+    }
+  }
+  const sorted = Object.entries(fieldCounts).sort((a, b) => b[1] - a[1]);
+  for (const [field, count] of sorted) {
+    lines.push(`  ${field}: ${count} loan${count !== 1 ? 's' : ''} need manual entry`);
+  }
+
+  return lines.join('\n');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SECTION 10: UI EVENT HANDLERS
+// ═══════════════════════════════════════════════════════════════
+
+function showStatus(msg, pct) {
+  const bar = document.getElementById('statusBar');
+  bar.style.display = 'block';
+  document.getElementById('statusText').textContent = msg;
+  document.getElementById('progressFill').style.width = (pct || 0) + '%';
+}
+
+function hideStatus() {
+  document.getElementById('statusBar').style.display = 'none';
+}
+
+function processFile(arrayBuffer) {
+  try {
+    showStatus('Reading MA batch export...', 10);
+
+    const rows = readMAFile(arrayBuffer);
+    if (rows.length < 2) {
+      showStatus('No data rows found in "Funded Loans" tab.', 100);
+      return;
+    }
+
+    showStatus(`Found ${rows.length - 1} rows. Filtering by cutoff date...`, 30);
+
+    const cutoffStr = document.getElementById('cutoffDate').value;
+    const cutoff = cutoffStr ? new Date(cutoffStr + 'T00:00:00') : new Date('2025-11-01');
+    const originator = document.getElementById('originatorName').value || ORIGINATOR_DEFAULT;
+    const forceReprocess = document.getElementById('forceReprocess').checked;
+
+    convertedLoans = [];
+    skippedLoans = [];
+
+    const dataRows = rows.slice(1); // skip header row
+
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i];
+      const loanId = safeStr(row[MA.LOAN_ID]);
+      if (!loanId) continue;
+
+      // Parse funding date and filter
+      const fundingDate = parseMADate(row[MA.FUNDING_DATE]);
+      if (!fundingDate || fundingDate < cutoff) continue;
+
+      // Check manifest
+      if (!forceReprocess && isProcessed(loanId)) {
+        skippedLoans.push(loanId);
+        continue;
+      }
+
+      const result = transformLoan(row, originator);
+      result.loanId = loanId;
+      convertedLoans.push(result);
+    }
+
+    showStatus(`Converted ${convertedLoans.length} loans (${skippedLoans.length} skipped).`, 80);
+
+    if (convertedLoans.length === 0) {
+      showStatus(`No new loans to process. ${skippedLoans.length} already in manifest. Use "Force reprocess" to re-convert.`, 100);
+      document.getElementById('statsGrid').style.display = 'grid';
+      updateStats();
+      return;
+    }
+
+    // Update manifest
+    markProcessed(convertedLoans.map(l => l.loanId));
+
+    showStatus('Rendering table...', 90);
+
+    // Show UI sections
+    document.getElementById('statsGrid').style.display = 'grid';
+    document.getElementById('tableSection').style.display = 'block';
+
+    renderTable();
+    renderHistory();
+
+    showStatus(`Done! ${convertedLoans.length} loans ready. Fill in yellow fields, then download.`, 100);
+    setTimeout(hideStatus, 3000);
+
+  } catch (err) {
+    showStatus('Error: ' + err.message, 100);
+    console.error(err);
+  }
+}
+
+function handleFileUpload(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    processFile(e.target.result);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function handleDownload() {
+  if (convertedLoans.length === 0) return;
+  const btn = document.getElementById('downloadBtn');
+  btn.textContent = 'Generating...';
+  btn.disabled = true;
+  try {
+    await generateRTLTape();
+  } catch (err) {
+    alert('Error generating file: ' + err.message);
+    console.error(err);
+  }
+  btn.textContent = 'Download RTL Tape (.xlsx)';
+  btn.disabled = false;
+}
+
+function showReport() {
+  const text = generateReportText();
+  document.getElementById('reportContent').textContent = text;
+  document.getElementById('reportModal').classList.add('active');
+}
+
+function closeReport() {
+  document.getElementById('reportModal').classList.remove('active');
+}
+
+function renderHistory() {
+  const m = loadManifest();
+  const list = document.getElementById('historyList');
+  const entries = Object.entries(m.processed);
+
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="history-empty">No loans processed yet.</div>';
+    return;
+  }
+
+  // Group by date
+  const byDate = {};
+  for (const [lid, date] of entries) {
+    if (!byDate[date]) byDate[date] = [];
+    byDate[date].push(lid);
+  }
+
+  let html = '';
+  const dates = Object.keys(byDate).sort().reverse();
+  for (const date of dates) {
+    const ids = byDate[date];
+    html += `<div class="history-item"><span>${date}</span><span>${ids.length} loan${ids.length !== 1 ? 's' : ''}: ${ids.slice(0, 5).join(', ')}${ids.length > 5 ? '...' : ''}</span></div>`;
+  }
+  html += `<button class="clear-history" onclick="if(confirm('Clear all processing history?')){clearManifest()}">Clear History</button>`;
+  list.innerHTML = html;
+}
+
+function toggleDarkMode() {
+  document.body.classList.toggle('dark');
+  const isDark = document.body.classList.contains('dark');
+  localStorage.setItem('legacy_tape_dark', isDark ? '1' : '0');
+  document.getElementById('darkBtn').textContent = isDark ? 'Light Mode' : 'Dark Mode';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════
+
+(function init() {
+  // Dark mode
+  if (localStorage.getItem('legacy_tape_dark') === '1') {
+    document.body.classList.add('dark');
+    document.getElementById('darkBtn').textContent = 'Light Mode';
+  }
+
+  // Upload zone
+  const zone = document.getElementById('uploadZone');
+  const fileInput = document.getElementById('fileInput');
+
+  zone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) handleFileUpload(e.target.files[0]);
+  });
+
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('drag-over');
+  });
+  zone.addEventListener('dragleave', () => {
+    zone.classList.remove('drag-over');
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleFileUpload(e.dataTransfer.files[0]);
+  });
+
+  // Event delegation for editable table cells
+  document.getElementById('tableBody').addEventListener('input', (e) => {
+    if (e.target.tagName === 'INPUT') {
+      const loanIdx = parseInt(e.target.dataset.loan, 10);
+      const colIdx = parseInt(e.target.dataset.col, 10);
+      handleCellEdit(loanIdx, colIdx, e.target.value);
+    }
+  });
+
+  // Close modal on overlay click
+  document.getElementById('reportModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeReport();
+  });
+
+  // Render history
+  renderHistory();
+})();
+</script>
+</body>
+</html>
