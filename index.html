@@ -847,6 +847,7 @@ function transformLoan(row, originator) {
   const interestRate = safeFloat(row[MA.INTEREST_RATE]);
   const holdbackPpiIr = safeFloat(row[MA.HOLDBACK_PPI_IR], 0);
   const term = safeInt(row[MA.TERM]);
+  const origFees = safeFloat(row[MA.ORIG_FEES], 0);
   const expectedClosing = parseMADate(row[MA.EXPECTED_CLOSING]);
   const fundingDate = parseMADate(row[MA.FUNDING_DATE]);
   const closingDate = parseMADate(row[MA.CLOSING_DATE]);
@@ -894,15 +895,37 @@ function transformLoan(row, originator) {
 
   const remainingBudget = rehabAmount;
 
-  // TPC (static value for table display; xlsx will use formula)
+  // BFIR (Borrower Funded Interest Reserve) — Legacy always = "No"
+  const bfir = 'No';
+
+  // Dates (needed for TPC seasoning calc)
+  const originationDate = closingDate || fundingDate;
+  const estimatedOrig = expectedClosing || closingDate;
+  const acquisitionDateRaw = isRefi ? null : originationDate;
+
+  // Seasoning: days between origination and acquisition
+  // For fresh purchases they're the same date → seasoning = 0 → "fresh" path
+  let seasoningDays = 0;
+  if (originationDate && acquisitionDateRaw) {
+    seasoningDays = Math.floor((originationDate - acquisitionDateRaw) / 86400000);
+  }
+  const isSeasoned = seasoningDays >= 180;
+
+  // TPC — Churchill's 4-branch formula
+  // Seasoned + BFIR=No:  AIV + Remaining Budget + IR
+  // Seasoned + BFIR=Yes: AIV + Remaining Budget
+  // Fresh + BFIR=No:     MIN(PP, AIV) + MIN(Wholesale, 10%*MIN(PP,AIV)) + Remaining + IR
+  // Fresh + BFIR=Yes:    MIN(PP, AIV) + MIN(Wholesale, 10%*MIN(PP,AIV)) + Remaining
   let tpc;
-  if (isRefi) {
-    tpc = (aiv || 0) + remainingBudget;
+  const wholesaleFee = 0; // Manual entry — will be updated via formula in xlsx
+  if (isSeasoned) {
+    tpc = (aiv || 0) + remainingBudget + (bfir === 'No' ? irAmount : 0);
   } else {
-    const base = (purchasePrice && aiv && purchasePrice > 0 && aiv > 0)
-      ? Math.min(purchasePrice, aiv)
-      : (purchasePrice || aiv || 0);
-    tpc = base + remainingBudget;
+    const ppVal = purchasePrice || 0;
+    const aivVal = aiv || 0;
+    const minBase = (ppVal > 0 && aivVal > 0) ? Math.min(ppVal, aivVal) : (ppVal || aivVal);
+    const wsCap = Math.min(wholesaleFee, 0.10 * minBase);
+    tpc = minBase + wsCap + remainingBudget + (bfir === 'No' ? irAmount : 0);
   }
 
   // Ratios
@@ -910,12 +933,15 @@ function transformLoan(row, originator) {
   const ltc = (tpc && tpc > 0 && totalLoan > 0) ? (totalLoan / tpc) : null;
   const ltarv = (arvVal && arvVal > 0 && totalLoan > 0) ? (totalLoan / arvVal) : null;
 
-  // Dates
-  const originationDate = closingDate || fundingDate;
-  const estimatedOrig = expectedClosing || closingDate;
+  // Total Origination Points — auto-calc from batch orig fees
+  // Points = (Origination Fees / Total Loan Amount) * 100
+  let origPoints = null;
+  if (origFees > 0 && totalLoan > 0) {
+    origPoints = parseFloat(((origFees / totalLoan) * 100).toFixed(4));
+  }
   const currentMaturity = originalMaturity;
   const nextPayment = calculateNextPayment(firstPayment);
-  const acquisitionDate = isRefi ? null : originationDate;
+  const acquisitionDate = acquisitionDateRaw;
   if (isRefi) manualFields.add(37);
 
   // Interest rate type
@@ -958,7 +984,7 @@ function transformLoan(row, originator) {
   manualFields.add(15); // Borrower Experience - Number
   manualFields.add(16); // Borrower Experience - $ Value
   manualFields.add(39); // Wholesale Fee
-  manualFields.add(58); // Total Origination Points
+  if (origPoints == null) manualFields.add(58); // Total Origination Points (only if can't auto-calc)
 
   // Build loan data for deal description
   const loanData = {
@@ -1029,7 +1055,7 @@ function transformLoan(row, originator) {
     rateTypeChurchill,                // 55 Interest Rate Type
     interestRate,                     // 56 Interest Rate
     'As Disbursed',                   // 57 Interest Accrual Type
-    null,                             // 58 Total Origination Points (manual)
+    origPoints,                        // 58 Total Origination Points (auto-calc or manual)
     'N',                              // 59 Cross Collateralization Flag
     'N',                              // 60 Extension Flag
     dealDesc,                         // 61 Deal Description
@@ -1124,23 +1150,35 @@ function recalcFormulas(loanIdx) {
   const pp = safeFloat(row[38], 0);
   const wholesale = safeFloat(row[39], 0);
   const remaining = safeFloat(row[40], 0);
+  const ir = safeFloat(row[27], 0);
+  const bfir = safeStr(row[20], 'No');
 
-  // TPC
-  let base;
-  if (pp === 0 || pp == null) {
-    base = aiv;
-  } else if (aiv > 0) {
-    base = Math.min(pp, aiv);
-  } else {
-    base = pp;
+  // Seasoning: Origination Date (col 50) - Acquisition Date (col 37)
+  const origDate = row[50];
+  const acqDate = row[37];
+  let seasoningDays = 0;
+  if (origDate instanceof Date && acqDate instanceof Date) {
+    seasoningDays = Math.floor((origDate - acqDate) / 86400000);
   }
-  const tpc = (base || 0) + remaining + wholesale;
+  const isSeasoned = seasoningDays >= 180;
+
+  // TPC — Churchill's 4-branch formula
+  let tpc;
+  if (isSeasoned) {
+    // Seasoned: TPC = AIV + Remaining + (IR if BFIR=No)
+    tpc = aiv + remaining + (bfir === 'No' ? ir : 0);
+  } else {
+    // Fresh: TPC = MIN(PP,AIV) + MIN(Wholesale, 10%*MIN(PP,AIV)) + Remaining + (IR if BFIR=No)
+    const minBase = (pp > 0 && aiv > 0) ? Math.min(pp, aiv) : (pp || aiv);
+    const wsCap = Math.min(wholesale, 0.10 * minBase);
+    tpc = minBase + wsCap + remaining + (bfir === 'No' ? ir : 0);
+  }
   row[42] = tpc > 0 ? tpc : null;
 
   // LTAIV
   row[43] = (aiv > 0 && day1 > 0) ? (day1 / aiv) : null;
 
-  // LTC
+  // LTC = Total Loan / TPC
   row[44] = (tpc > 0 && totalLoan > 0) ? (totalLoan / tpc) : null;
 
   // LTARV
@@ -1274,7 +1312,7 @@ function handleCellEdit(loanIdx, colIdx, newValue) {
   }
 
   // Recalc formulas if dependent field changed
-  const formulaDeps = new Set([25, 28, 34, 35, 38, 39, 40]); // day1, totalLoan, AIV, ARV, PP, Wholesale, Remaining
+  const formulaDeps = new Set([25, 27, 28, 34, 35, 38, 39, 40]); // day1, IR, totalLoan, AIV, ARV, PP, Wholesale, Remaining
   if (formulaDeps.has(colIdx)) {
     recalcFormulas(loanIdx);
     // Update formula display cells
@@ -1354,8 +1392,9 @@ async function generateRTLTape() {
       cell.border = thinBorder;
 
       // Formula columns
-      if (ci === 42) { // TPC
-        cell.value = { formula: `IF(AM${rowNum}="",AI${rowNum}+AO${rowNum}+AN${rowNum},MIN(AM${rowNum},AI${rowNum})+AO${rowNum}+AN${rowNum})` };
+      if (ci === 42) { // TPC — Churchill's 4-branch formula
+        // U=BFIR, AY=OrigDate, AL=AcqDate, AI=AIV, AO=RemBudget, AB=IR, AM=PP, AN=Wholesale
+        cell.value = { formula: `IF(AND(U${rowNum}="No",(AY${rowNum}-AL${rowNum})>=180),AI${rowNum}+AO${rowNum}+AB${rowNum},IF(AND(U${rowNum}="Yes",(AY${rowNum}-AL${rowNum})>=180),AI${rowNum}+AO${rowNum},IF(AND(U${rowNum}="No",(AY${rowNum}-AL${rowNum})<180),MIN(AM${rowNum},AI${rowNum})+MIN(AN${rowNum},0.1*(MIN(AM${rowNum},AI${rowNum})))+AO${rowNum}+AB${rowNum},IF(AND(U${rowNum}="Yes",(AY${rowNum}-AL${rowNum})<180),MIN(AM${rowNum},AI${rowNum})+MIN(AN${rowNum},(0.1*MIN(AM${rowNum},AI${rowNum})))+AO${rowNum}))))` };
         cell.numFmt = '#,##0';
         continue;
       } else if (ci === 43) { // LTAIV
