@@ -917,7 +917,7 @@ function transformLoan(row, originator) {
   // Fresh + BFIR=No:     MIN(PP, AIV) + MIN(Wholesale, 10%*MIN(PP,AIV)) + Remaining + IR
   // Fresh + BFIR=Yes:    MIN(PP, AIV) + MIN(Wholesale, 10%*MIN(PP,AIV)) + Remaining
   let tpc;
-  const wholesaleFee = 0; // Manual entry — will be updated via formula in xlsx
+  const wholesaleFee = 0; // Defaults to 0; flagged manual only if PP > AIV (discrepancy)
   if (isSeasoned) {
     tpc = (aiv || 0) + remainingBudget + (bfir === 'No' ? irAmount : 0);
   } else {
@@ -983,8 +983,19 @@ function transformLoan(row, originator) {
   manualFields.add(14); // Cash Reserves
   manualFields.add(15); // Borrower Experience - Number
   manualFields.add(16); // Borrower Experience - $ Value
-  manualFields.add(39); // Wholesale Fee
   if (origPoints == null) manualFields.add(58); // Total Origination Points (only if can't auto-calc)
+
+  // Wholesale Fee — default to 0, only flag manual if discrepancy suggests one exists
+  // A wholesale fee is indicated when purchase price exceeds AIV (as-is value) by >1%,
+  // meaning the borrower likely paid a wholesaler markup above appraised value.
+  let wholesaleDefault = 0;
+  const ppVal2 = purchasePrice || 0;
+  const aivVal2 = aiv || 0;
+  if (!isRefi && ppVal2 > 0 && aivVal2 > 0 && ppVal2 > aivVal2 * 1.01) {
+    // Purchase price exceeds AIV — likely a wholesale fee exists
+    wholesaleDefault = null;
+    manualFields.add(39); // Flag for manual entry
+  }
 
   // Build loan data for deal description
   const loanData = {
@@ -1036,7 +1047,7 @@ function transformLoan(row, originator) {
     null,                             // 36 Market Rent (manual if rental)
     acquisitionDate,                  // 37 Property Acquisition Date
     isRefi ? null : purchasePrice,    // 38 Purchase Price
-    null,                             // 39 Wholesale Fee (manual)
+    wholesaleDefault,                  // 39 Wholesale Fee (0 unless discrepancy detected)
     remainingBudget,                  // 40 Remaining Budget
     costsSpent,                       // 41 Costs Spent to Date
     tpc > 0 ? tpc : null,            // 42 Total Project Costs (formula)
