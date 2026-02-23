@@ -276,6 +276,24 @@ td.desc-cell { max-width: 300px; white-space: pre-wrap; font-size: 11px; line-he
 .row-status.complete { background: var(--accent); }
 .row-status.incomplete { background: var(--warning); }
 
+/* Compliance Flags */
+.flag-cell { text-align: center; white-space: nowrap; }
+.flag-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: help;
+}
+.flag-badge.red { background: #fecaca; color: #991b1b; border: 1px solid #f87171; }
+.flag-badge.amber { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; }
+body.dark .flag-badge.red { background: #5c1818; color: #fca5a5; border-color: #b91c1c; }
+body.dark .flag-badge.amber { background: #4a3500; color: #fde68a; border-color: #d97706; }
+.flag-pass { color: var(--accent); font-size: 14px; }
+tr.flagged-row td:first-child { border-left: 3px solid var(--danger); }
+
 /* History Section */
 .history-section {
   background: var(--bg-card);
@@ -384,6 +402,7 @@ td.desc-cell { max-width: 300px; white-space: pre-wrap; font-size: 11px; line-he
     <div class="stat-card"><div class="label">Manual Fields Left</div><div class="value" id="statManual">0</div></div>
     <div class="stat-card"><div class="label">Skipped (Dedup)</div><div class="value" id="statSkipped">0</div></div>
     <div class="stat-card"><div class="label">Total Loan Volume</div><div class="value" id="statVolume">$0</div></div>
+    <div class="stat-card"><div class="label">Flagged for Review</div><div class="value" id="statFlagged" style="color:var(--danger)">0</div></div>
   </div>
 
   <section class="table-section" id="tableSection">
@@ -553,6 +572,40 @@ const MONEY_COLS = new Set([5, 6, 14, 16, 24, 25, 26, 27, 28, 29, 30, 34, 35, 36
 const PCT_COLS = new Set([43, 44, 45]);
 const FORMULA_COLS = new Set([42, 43, 44, 45]);
 const SQFT_COLS = new Set([46, 47]);
+
+// ── Compliance Rules ──────────────────────────────────────────
+// Each rule: { id, label, test(rtlRow) → true if FLAGGED, severity: 'red'|'amber' }
+// Add new rules here and they'll automatically show in the table and report.
+const COMPLIANCE_RULES = [
+  {
+    id: 'ltc_high',
+    label: 'LTC > 90%',
+    severity: 'red',
+    test: (row) => {
+      const ltc = row[44]; // LTC ratio (0-based col 44)
+      return ltc != null && ltc > 0.90;
+    },
+  },
+  {
+    id: 'ltarv_high',
+    label: 'LTARV > 75%',
+    severity: 'red',
+    test: (row) => {
+      const ltarv = row[45]; // LTARV ratio (0-based col 45)
+      return ltarv != null && ltarv > 0.75;
+    },
+  },
+];
+
+function checkCompliance(rtlRow) {
+  const flags = [];
+  for (const rule of COMPLIANCE_RULES) {
+    if (rule.test(rtlRow)) {
+      flags.push(rule);
+    }
+  }
+  return flags;
+}
 
 // Property type mapping: MA -> Churchill
 const PROPERTY_TYPE_MAP = {
@@ -1122,6 +1175,7 @@ function renderTable() {
   // Header
   let headerHtml = '<tr>';
   headerHtml += '<th>#</th>';
+  headerHtml += '<th style="background:#991b1b">Flags</th>';
   for (let i = 0; i < RTL_COLUMNS.length; i++) {
     headerHtml += `<th title="${RTL_COLUMNS[i]}">${RTL_COLUMNS[i]}</th>`;
   }
@@ -1134,9 +1188,20 @@ function renderTable() {
     const { rtlRow, manualFields } = convertedLoans[li];
     const manualLeft = countManualEmpty(li);
     const statusClass = manualLeft === 0 ? 'complete' : 'incomplete';
+    const flags = checkCompliance(rtlRow);
+    const hasFl = flags.length > 0;
 
-    bodyHtml += '<tr>';
+    bodyHtml += `<tr class="${hasFl ? 'flagged-row' : ''}">`;
     bodyHtml += `<td><span class="row-status ${statusClass}"></span>${li + 1}</td>`;
+
+    // Flags column
+    if (hasFl) {
+      const tooltipText = flags.map(f => f.label).join(', ');
+      const badges = flags.map(f => `<span class="flag-badge ${f.severity}" title="${escapeAttr(tooltipText)}">${escapeHtml(f.label)}</span>`).join(' ');
+      bodyHtml += `<td class="flag-cell">${badges}</td>`;
+    } else {
+      bodyHtml += `<td class="flag-cell"><span class="flag-pass">&#10003;</span></td>`;
+    }
 
     for (let ci = 0; ci < RTL_COLUMNS.length; ci++) {
       const isManual = manualFields.has(ci);
@@ -1184,11 +1249,13 @@ function countManualEmpty(loanIdx) {
 function updateStats() {
   const totalManual = convertedLoans.reduce((sum, _, i) => sum + countManualEmpty(i), 0);
   const totalVolume = convertedLoans.reduce((sum, l) => sum + (safeFloat(l.rtlRow[28], 0)), 0);
+  const totalFlagged = convertedLoans.filter(l => checkCompliance(l.rtlRow).length > 0).length;
 
   document.getElementById('statLoans').textContent = convertedLoans.length;
   document.getElementById('statManual').textContent = totalManual;
   document.getElementById('statSkipped').textContent = skippedLoans.length;
   document.getElementById('statVolume').textContent = formatMoney(totalVolume);
+  document.getElementById('statFlagged').textContent = totalFlagged;
   document.getElementById('loanCount').textContent = `${convertedLoans.length} loan${convertedLoans.length !== 1 ? 's' : ''}`;
   document.getElementById('manualCount').textContent = totalManual > 0 ? `${totalManual} manual field${totalManual !== 1 ? 's' : ''} remaining` : 'All fields complete';
 }
@@ -1217,13 +1284,26 @@ function handleCellEdit(loanIdx, colIdx, newValue) {
     }
   }
 
-  // Update row status
+  // Update row status + compliance flags
   const rowEl = document.getElementById('tableBody').children[loanIdx];
   if (rowEl) {
     const statusSpan = rowEl.querySelector('.row-status');
     if (statusSpan) {
       const left = countManualEmpty(loanIdx);
       statusSpan.className = 'row-status ' + (left === 0 ? 'complete' : 'incomplete');
+    }
+    // Update flag cell (2nd <td>)
+    const flagCell = rowEl.children[1];
+    if (flagCell) {
+      const flags = checkCompliance(loan.rtlRow);
+      if (flags.length > 0) {
+        rowEl.classList.add('flagged-row');
+        const tooltipText = flags.map(f => f.label).join(', ');
+        flagCell.innerHTML = flags.map(f => `<span class="flag-badge ${f.severity}" title="${escapeAttr(tooltipText)}">${escapeHtml(f.label)}</span>`).join(' ');
+      } else {
+        rowEl.classList.remove('flagged-row');
+        flagCell.innerHTML = '<span class="flag-pass">&#10003;</span>';
+      }
     }
   }
   updateStats();
@@ -1408,6 +1488,24 @@ function generateReportText() {
     lines.push('-'.repeat(70));
     for (const lid of skippedLoans) {
       lines.push(`  Loan ${lid}`);
+    }
+  }
+
+  // Compliance flags summary
+  const flaggedLoans = convertedLoans.filter(l => checkCompliance(l.rtlRow).length > 0);
+  if (flaggedLoans.length > 0) {
+    lines.push('');
+    lines.push('-'.repeat(70));
+    lines.push(`COMPLIANCE FLAGS (${flaggedLoans.length} loan${flaggedLoans.length !== 1 ? 's' : ''} flagged)`);
+    lines.push('-'.repeat(70));
+    for (const loan of flaggedLoans) {
+      const r = loan.rtlRow;
+      const flags = checkCompliance(r);
+      const flagLabels = flags.map(f => f.label).join(', ');
+      const ltcVal = r[44] != null ? (r[44] * 100).toFixed(1) + '%' : 'N/A';
+      const ltarvVal = r[45] != null ? (r[45] * 100).toFixed(1) + '%' : 'N/A';
+      lines.push(`  Loan ${r[0]}: ${r[8]} — ${flagLabels}`);
+      lines.push(`    LTC: ${ltcVal}  |  LTARV: ${ltarvVal}  |  Total Loan: ${formatMoney(r[28])}`);
     }
   }
 
